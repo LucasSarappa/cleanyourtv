@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Liquid glass sheet: a cool deep tint over the (already blurred) wallpaper, opaque enough that the tiles and the
+     clock behind never read through, a bright rim and a soft top sheen. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient android:angle="270" android:startColor="#FA2C426E" android:endColor="#FD182440" />
+            <corners android:radius="30dp" />
+        </shape>
+    </item>
+    <item android:bottom="320dp">
+        <shape android:shape="rectangle">
+            <gradient android:angle="270" android:startColor="#24FFFFFF" android:endColor="#00FFFFFF" />
+            <corners android:topLeftRadius="30dp" android:topRightRadius="30dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <stroke android:width="1.5dp" android:color="#4DFFFFFF" />
+            <corners android:radius="30dp" />
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="assist_label" translatable="false">TV Box: atajos de partidos</string>
+    <string name="assist_description" translatable="false">Durante 25 segundos después de elegir un partido, elige el canal en Flow o el perfil y el partido en Disney+. Solo puede ver la pantalla de Flow y Disney+.</string>
+</resources>

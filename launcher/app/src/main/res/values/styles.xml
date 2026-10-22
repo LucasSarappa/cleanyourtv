@@ -26,6 +26,30 @@
     </style>
     <style name="TopButton" parent="TopButtonBase" />
 
+    <!-- The player panel's round controls: glass, a white rim when focused. -->
+    <style name="PlayerButton">
+        <item name="android:layout_width">46dp</item>
+        <item name="android:layout_height">46dp</item>
+        <item name="android:layout_marginStart">6dp</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/player_button_bg</item>
+        <item name="android:textColor">#FFFFFFFF</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:focusable">true</item>
+        <item name="android:clickable">true</item>
+    </style>
+
+    <!-- The remote hints along the Appearance panel's foot ("◀ Cerrar", "OK Elegir"). -->
+    <style name="PanelHint">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#99FFFFFF</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:fontFamily">@font/outfit_medium</item>
+        <item name="android:singleLine">true</item>
+    </style>
+
     <!-- Icon-only pill: a 42dp circle (pill_bg's 21dp corners) with the 22dp icon centred by even padding. Give it a
          contentDescription, since there is no text. -->
     <style name="TopButtonIcon" parent="TopButtonBase">

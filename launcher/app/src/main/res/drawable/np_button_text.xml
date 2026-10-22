@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The play/pause glyph: dark on the white button the focused card shows, white otherwise. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true" android:color="#FF111111" />
+    <item android:color="#FFFFFFFF" />
+</selector>

@@ -12,6 +12,15 @@
         android:layout_height="match_parent"
         android:importantForAccessibility="no" />
 
+    <!-- menu_style "side" over a sharp wallpaper: a soft shade towards the dock so it reads over any photo. -->
+    <View
+        android:id="@+id/homeScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/home_scrim"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+
     <!-- Cinematic top shelf (cinematic_home): the focused dock app's artwork, a few pixels across and
          stretched over the screen, which softens it like a blur without the cost of one. Hidden otherwise. -->
     <ImageView
@@ -103,6 +112,157 @@
         android:visibility="gone"
         android:importantForAccessibility="no" />
 
+    <!-- clock_style "center": greeting, large clock and date centred like a lock screen. The clock row and the
+         greeting in the top bar are hidden then. -->
+    <LinearLayout
+        android:id="@+id/centerClock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="44dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:importantForAccessibility="no"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/centerGreeting"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:textColor="#B3FFFFFF"
+            android:textSize="13sp"
+            android:fontFamily="@font/outfit_medium"
+            android:letterSpacing="0.28"
+            android:textAllCaps="true"
+            android:shadowColor="#66000000"
+            android:shadowRadius="12" />
+
+        <TextClock
+            android:id="@+id/centerTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:format12Hour="h:mm"
+            android:format24Hour="HH:mm"
+            android:textColor="#FFFFFFFF"
+            android:textSize="96sp"
+            android:fontFamily="@font/outfit_light"
+            android:letterSpacing="-0.03"
+            android:includeFontPadding="false"
+            android:shadowColor="#59000000"
+            android:shadowRadius="24" />
+
+        <TextClock
+            android:id="@+id/centerDate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:format12Hour="@string/date_format_home"
+            android:format24Hour="@string/date_format_home"
+            android:singleLine="true"
+            android:textColor="#D9FFFFFF"
+            android:textSize="15sp"
+            android:fontFamily="@font/outfit_medium"
+            android:letterSpacing="0.18"
+            android:textAllCaps="true"
+            android:shadowColor="#66000000"
+            android:shadowRadius="12" />
+    </LinearLayout>
+
+    <!-- now_playing: the media session that is playing (Spotify, YouTube…): artwork, title, artist, progress and
+         a play/pause button. OK pauses or plays; it hides itself when nothing is playing. -->
+    <LinearLayout
+        android:id="@+id/nowPlaying"
+        android:layout_width="290dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="30dp"
+        android:layout_marginEnd="44dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="10dp"
+        android:background="@drawable/now_playing_bg"
+        android:focusable="true"
+        android:clickable="true"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/npArt"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:scaleType="centerCrop"
+            android:background="@drawable/np_art_bg"
+            android:contentDescription="@null" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="10dp"
+            android:orientation="vertical"
+            android:duplicateParentState="true">
+
+            <TextView
+                android:id="@+id/npTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#FFFFFFFF"
+                android:duplicateParentState="true"
+                android:textSize="15sp"
+                android:fontFamily="@font/outfit_medium" />
+
+            <!-- The equalizer bounces while something plays, as in the reference video. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <com.gathin.tvhome.EqualizerView
+                    android:id="@+id/npEqualizer"
+                    android:layout_width="13dp"
+                    android:layout_height="11dp"
+                    android:layout_marginEnd="6dp" />
+
+                <TextView
+                    android:id="@+id/npArtist"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textColor="#A6FFFFFF"
+                    android:duplicateParentState="true"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/outfit" />
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/npProgress"
+                style="@android:style/Widget.Material.ProgressBar.Horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:layout_marginTop="7dp"
+                android:max="1000"
+                android:progressDrawable="@drawable/np_progress" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/npButton"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:gravity="center"
+            android:background="@drawable/np_button_bg"
+            android:duplicateParentState="true"
+            android:textColor="@drawable/np_button_text"
+            android:textSize="13sp"
+            android:text="❚❚" />
+    </LinearLayout>
+
     <!-- Top shelf: the focused dock app's name, positioned above the dock in code. -->
     <LinearLayout
         android:id="@+id/hero"
@@ -190,6 +350,7 @@
                     android:textAllCaps="true" />
 
                 <LinearLayout
+                    android:id="@+id/clockRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -273,6 +434,45 @@
                     </LinearLayout>
                 </LinearLayout>
 
+                <!-- Chips under the greeting: the weather (a reading, focus skips it) and football (config.json futbol:
+                     the favourite's match or how many are on; OK opens the list). -->
+                <!-- Stacked, not side by side: with the clock centred the chips must stay clear of it. -->
+                <LinearLayout
+                    android:id="@+id/chips"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical"
+                    android:clipChildren="false"
+                    android:clipToPadding="false">
+
+                    <!-- Two lines: the reading, then the feels-like temperature and the place. -->
+                    <TextView
+                        android:id="@+id/weatherPill"
+                        style="@style/TopButton"
+                        android:layout_height="wrap_content"
+                        android:minHeight="42dp"
+                        android:layout_marginStart="0dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:gravity="center_vertical|start"
+                        android:maxLines="2"
+                        android:lineSpacingExtra="1dp"
+                        android:focusable="false"
+                        android:clickable="false"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/btnFootball"
+                        style="@style/TopButton"
+                        android:layout_marginStart="0dp"
+                        android:layout_marginTop="8dp"
+                        android:singleLine="true"
+                        android:text="⚽  Fútbol"
+                        android:visibility="gone"
+                        android:nextFocusDown="@+id/grid" />
+                </LinearLayout>
+
             </LinearLayout>
 
             <!-- Shown only when show_stats is on. Outside leftBlock, so the top buttons stay level with the clock
@@ -337,6 +537,15 @@
                     android:drawableStart="@drawable/ic_apps"
                     android:nextFocusDown="@+id/grid" />
 
+                <!-- menu_style "side": the launcher's own Appearance panel (AppearancePanel). -->
+                <TextView
+                    android:id="@+id/btnAppearance"
+                    style="@style/TopButton"
+                    android:text="Apariencia"
+                    android:drawableStart="@drawable/ic_palette"
+                    android:visibility="gone"
+                    android:nextFocusDown="@+id/grid" />
+
                 <TextView
                     android:id="@+id/btnSettings"
                     style="@style/TopButton"
@@ -366,6 +575,17 @@
                 android:descendantFocusability="afterDescendants" />
         </FrameLayout>
     </LinearLayout>
+
+    <!-- The locked screen's matches: up to four cards along the bottom, where the dock was (MainActivity). -->
+    <LinearLayout
+        android:id="@+id/lockMatches"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="44dp"
+        android:orientation="horizontal"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
 
     <!-- The single floating glass highlight that springs between tiles. -->
     <com.gathin.tvhome.GlassView

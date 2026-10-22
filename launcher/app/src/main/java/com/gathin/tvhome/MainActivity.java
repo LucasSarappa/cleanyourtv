@@ -11,6 +11,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -43,10 +45,12 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.SpannableString;
+import android.util.Log;
 import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -57,10 +61,12 @@ import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.animation.AnimationUtils;
 import android.view.animation.LayoutAnimationController;
+import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -75,6 +81,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -145,6 +152,42 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private View clockBlock;
     private View btnInputs;
     private TextView btnWifi;
+    /** Weather pill, style rules, glass dock and centred clock from config.json (see Personal). */
+    private Personal personal;
+    /** The theme's look with the Appearance panel's choices on top. */
+    private Appearance look;
+    private TextView centerGreeting;
+    /** menu_style "side": the top-bar buttons as a column at the right, shown only while one has focus. */
+    private LinearLayout sideMenu;
+    private boolean sideMenuShown;
+    /** Home is locked (rest_seconds or Back): only the clock, weather, music and matches show until the next key. */
+    private boolean resting;
+    /** Today's matches along the bottom of the locked screen. */
+    private LinearLayout lockMatches;
+    /** config.json sounds: Home's own tick and pop; null when off. */
+    private Sounds sounds;
+    /** When an arrow key last went down: a focus change right after it was a move, and ticks. */
+    private long lastNavKey;
+    /** Left presses on the first dock tile, and when the run of them began (the easter egg wants five quickly). */
+    private int eggPresses;
+    private long eggStart;
+    /** The clock, chips and Now playing are up; false while focus is in the rows under the dock. */
+    private boolean topShown = true;
+    /** Where the dock's name sat when Home locked, so it comes back to the same place; NaN before the first lock. */
+    private float heroRestY = Float.NaN;
+    private NowPlaying nowPlaying;
+    private AppearancePanel appearancePanel;
+    /** Null when the theme sets no weather place. */
+    private Weather weather;
+    private TextView weatherPill;
+    /** Null when the theme lists no football leagues. */
+    private Football football;
+    /** Team crests for the match list, created the first time it opens. */
+    private Crests crests;
+    private TextView btnFootball;
+    private View centerClock;
+    /** The greeting of the style rule that applies now; empty for the time-of-day greeting. */
+    private String styleGreeting = "";
     /** The network pill's icon as last set, so a refresh that changes nothing does not lay the top bar out again. */
     private int wifiIcon;
     /** The pills have been filled in once; later resumes refresh them after the first frame. */
@@ -293,6 +336,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             updateRace();
             updateWifiLabel();
             sky.update();
+            if (weather != null) weather.update();
+            if (football != null) football.update(false);
+            applyStyle();
             wallpaperPlayer.update();
             handler.postDelayed(this, MINUTE_MS);
         }
@@ -327,7 +373,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // black under it is a second full-screen fill on every frame for nothing. The starting window still uses
         // the theme's background, so launch looks the same.
         getWindow().setBackgroundDrawable(null);
-        wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
+        personal = cfg.personal;
+        look = Appearance.load(this, personal);
+        if (personal.sounds) sounds = new Sounds(this);
+        if (personal.weatherEnabled()) weather = new Weather(this, personal, reading -> {
+            showWeather(reading);
+            applyStyle();   // a rule may follow the weather
+        });
+        // The style that applies now picks Home's first wallpaper, so it opens with it instead of switching later.
+        LocalDateTime now = LocalDateTime.now();
+        styleGreeting = StyleRule.greeting(personal.styles, now, weatherCondition());
+        wallpaperPlayer = new WallpaperPlayer(this, root, cfg, StyleRule.wallpaper(personal.styles, now, weatherCondition()),
+                look.wallpaperBlur);
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
@@ -355,6 +412,32 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         clockBlock = findViewById(R.id.leftBlock);
         greetingColor = greeting.getCurrentTextColor();
         btnWifi = findViewById(R.id.btnWifi);
+        weatherPill = findViewById(R.id.weatherPill);
+        if (weather != null) {
+            weatherPill.setVisibility(View.VISIBLE);
+            showWeather(weather.last());
+        }
+        btnFootball = findViewById(R.id.btnFootball);
+        lockMatches = findViewById(R.id.lockMatches);
+        // Invisible, not gone, until the first list arrives: an empty pill never flashes on a day without matches,
+        // and the row keeps its height, so the dock does not jump down (and leave the glass behind) when it shows.
+        if (personal.footballEnabled()) {
+            football = new Football(personal, matches -> showFootball());
+            btnFootball.setOnClickListener(v -> showMatches());
+            btnFootball.setVisibility(View.INVISIBLE);
+        }
+        centerClock = findViewById(R.id.centerClock);
+        centerGreeting = findViewById(R.id.centerGreeting);
+        if (personal.centeredClock) {
+            // The greeting moves into the centred block, over the clock, as on a lock screen.
+            findViewById(R.id.clockRow).setVisibility(View.GONE);
+            greeting.setVisibility(View.GONE);
+            centerClock.setVisibility(View.VISIBLE);
+        }
+        if (!look.greeting) {
+            greeting.setVisibility(View.GONE);
+            centerGreeting.setVisibility(View.GONE);
+        }
         shamsiDate = findViewById(R.id.shamsiDate);
         stats = findViewById(R.id.stats);
         raceCalendar = cfg.raceCalendar;
@@ -410,7 +493,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 else dy = Math.min(top, bottom - limitBottom);
                 if (dy == 0) return false;
                 if (immediate || reducedMotion || !animations) parent.scrollBy(0, dy);
-                else parent.smoothScrollBy(0, dy);
+                else parent.smoothScrollBy(0, dy, GLIDE, 460);   // a long, eased glide instead of the default quick snap
                 return true;
             }
         });
@@ -431,7 +514,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             public void onChildViewDetachedFromWindow(@NonNull View v) {
             }
         });
-        if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic, cfg.alwaysShowNames));
+        if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic, cfg.alwaysShowNames,
+                look.dockStyle, personal.dockReflection));
         if (animations) {
             int enterAnim = reducedMotion ? R.anim.tile_enter_reduced : R.anim.tile_enter;
             float enterDelay = reducedMotion ? 0f : 0.06f;
@@ -458,7 +542,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // Keep the hero below the header when the library is enabled on a short screen,
             // even when the theme requests an extra visible row below the dock.
             int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
-            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density));
+            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (personal.dockBottomDp * density));
             // Where the rows cannot fit even at the smallest tile (3 rows with the title on), the title keeps its
             // room above the dock and the last rows run off the bottom instead of the title drawing over the clock.
             if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
@@ -561,8 +645,25 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnSettings.setOnKeyListener(pillKeys);
         btnReorder.setOnKeyListener(pillKeys);
         btnLibraryTop.setOnKeyListener(pillKeys);
+        // The football pill sits alone at the left, under the greeting: Right goes over to the top bar's buttons.
+        btnFootball.setOnKeyListener((v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return true;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                focusTile(lastFocused % COLUMNS);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                View np = findViewById(R.id.nowPlaying);
+                if (sideMenu != null && np.getVisibility() == View.VISIBLE) np.requestFocus();
+                else if (sideMenu != null && !sidePills().isEmpty()) sidePills().get(0).requestFocus();
+                else (btnInputs.getVisibility() == View.VISIBLE ? btnInputs : firstTopButton()).requestFocus();
+                return true;
+            }
+            return false;
+        });
         if (advancedEffects) {
-            for (View button : new View[]{btnInputs, btnWifi, btnReorder, btnLibraryTop, btnSettings}) {
+            for (View button : new View[]{btnFootball, btnInputs, btnWifi, btnReorder, btnLibraryTop, btnSettings}) {
                 button.setOnFocusChangeListener((view, focused) -> view.animate()
                         .scaleX(focused ? 1.04f : 1f).scaleY(focused ? 1.04f : 1f)
                         .setDuration(160).start());
@@ -570,8 +671,56 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         if (festive) applyFestiveSkin((TextView) btnInputs, (TextView) btnSettings);
 
+        View btnAppearance = findViewById(R.id.btnAppearance);
+        btnAppearance.setOnClickListener(v -> openAppearance());
+        if (personal.sideMenu) {
+            setUpSideMenu((TextView) btnSettings, btnAppearance);
+            findViewById(R.id.homeScrim).setVisibility(View.VISIBLE);
+        }
+        // Now playing sits top right, where the top bar would be, so it comes with the side menu only.
+        View npCard = findViewById(R.id.nowPlaying);
+        if (look.nowPlaying && sideMenu != null) {
+            nowPlaying = new NowPlaying(this, npCard, new NowPlaying.Listener() {
+                @Override
+                public void onVisibility(boolean shown) {
+                    if (!shown && npCard.hasFocus()) focusTile(lastFocused % COLUMNS);
+                    if (!shown && playerPopup != null) playerPopup.dismiss();
+                }
+
+                @Override
+                public void onChanged() {
+                    if (playerPopup != null) fillPlayer();
+                }
+
+                @Override
+                public void onOpenPlayer() {
+                    showPlayer();
+                }
+            });
+            npCard.setOnKeyListener((v, keyCode, event) -> {
+                if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+                switch (keyCode) {
+                    case KeyEvent.KEYCODE_DPAD_UP:
+                    case KeyEvent.KEYCODE_DPAD_RIGHT:
+                        return true;
+                    case KeyEvent.KEYCODE_DPAD_DOWN:
+                        List<View> pills = sidePills();
+                        if (pills.isEmpty()) focusTile(lastFocused % COLUMNS);
+                        else pills.get(0).requestFocus();
+                        return true;
+                    case KeyEvent.KEYCODE_DPAD_LEFT:
+                        if (btnFootball.getVisibility() == View.VISIBLE) btnFootball.requestFocus();
+                        return true;
+                    default:
+                        return false;
+                }
+            });
+        }
+
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
+            if (sideMenu != null) showSideMenu(newF != null && newF.getParent() == sideMenu);
+            if (sounds != null && newF != null && SystemClock.uptimeMillis() - lastNavKey < 300) sounds.tick();
             boolean onTile = newF != null && newF.getId() == R.id.card;
             if (!onTile) hideGlass();
         });
@@ -672,6 +821,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (showStats) startStats();
         sky.update();
         wallpaperPlayer.start();
+        if (weather != null) weather.update();
+        if (football != null) football.update(false);
+        applyStyle();
+        if (nowPlaying != null) nowPlaying.start();
+        // Back on Home it is awake: the dock is up, so the wallpaper softens behind it.
+        if (resting) wake();
+        else wallpaperPlayer.setBlurred(true);
+        scheduleRest();
         handler.postDelayed(minuteTick, MINUTE_MS);
         if (festive && diya != null) {
             diya.start();
@@ -774,6 +931,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     public void onUserInteraction() {
         super.onUserInteraction();
         restartIdleClock();
+        scheduleRest();
     }
 
     private void restartIdleClock() {
@@ -785,6 +943,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onPause() {
         super.onPause();
         root.removeCallbacks(showIdleClock);
+        root.removeCallbacks(restNow);
+        if (nowPlaying != null) nowPlaying.stop();
         endReorder();   // Home or another app while reordering keeps the order so far
         wallpaperPlayer.stop();
         stopAmbientAnimation();
@@ -848,6 +1008,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onDestroy() {
         super.onDestroy();
         wallpaperPlayer.close();
+        if (weather != null) weather.close();
+        if (football != null) football.close();
+        if (crests != null) crests.close();
+        if (sounds != null) sounds.release();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) tim.unregisterCallback(inputCallback);
@@ -889,6 +1053,53 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        if (appearancePanel != null && appearancePanel.isOpen() && keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) appearancePanel.back();
+            return true;
+        }
+        // Resting: the first key only wakes Home (the arrows, OK and Back would otherwise also act on what is
+        // under them); volume and media keys wake it and still do their job.
+        if (resting) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) wake();
+            if (KeyEvent.isMediaSessionKey(keyCode) || keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                    || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_MUTE) {
+                return super.dispatchKeyEvent(event);
+            }
+            return true;
+        }
+        boolean okKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER;
+        boolean arrow = keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                || keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN;
+        if (arrow && event.getAction() == KeyEvent.ACTION_DOWN) lastNavKey = SystemClock.uptimeMillis();
+        if (okKey && event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled() && sounds != null) sounds.select();
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getRepeatCount() == 0 && focusedTilePosition() == 0) countEggPress();
+        // Choosing an app for the dock: OK on a tile under the dock picks it, Back cancels.
+        if (pickSlot != PICK_NONE && !reordering) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_UP) {
+                    endPick();
+                    focusTile(0);
+                }
+                return true;
+            }
+            int at = focusedTilePosition();
+            if (okKey && at >= COLUMNS) {
+                if (event.getAction() == KeyEvent.ACTION_UP) pick(at);
+                return true;
+            }
+        }
+        // Back on Home locks it: only the clock, the weather, the music and today's matches stay.
+        if (keyCode == KeyEvent.KEYCODE_BACK && !reordering && sideMenu != null
+                && openPopup == null && (appearancePanel == null || !appearancePanel.isOpen())) {
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
+                if (focusedTilePosition() >= COLUMNS) focusTile(lastFocused % COLUMNS);   // back to the dock first
+                else rest();
+            }
+            return true;
+        }
         if (handleSettingsKey(event)) return true;
         if (!reordering) return super.dispatchKeyEvent(event);
         if (dockEditing) return dispatchDockEdit(event);
@@ -1234,10 +1445,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             boolean scroll = Math.abs(dy) > (int) (8 * density);
             if (scroll) {
                 if (!animations || reducedMotion) grid.scrollBy(0, dy);
-                else grid.smoothScrollBy(0, dy);
+                else grid.smoothScrollBy(0, dy, GLIDE, 460);
             }
             showHero(position, scroll ? r.top - dy : r.top);
+            setTopShown(true);
         } else {
+            setTopShown(false);
             // Below the dock (or in a plain grid) the glow follows the tile without the big name; letting it
             // fade out left the grid on plain black.
             showGlowOnly(position);
@@ -1772,6 +1985,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     rtlAppGrid, keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+            if (position < COLUMNS && sideMenu != null) {   // side menu: chips on the left half, the menu on the right
+                upFromDock(position);
+                return true;
+            }
             if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
             target = position - COLUMNS;
         } else {
@@ -1904,6 +2121,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void updateClockVisibility() {
         boolean valid = System.currentTimeMillis() >= TIME_VALID_AFTER_MS;
         clockBlock.setVisibility(valid ? View.VISIBLE : View.INVISIBLE);
+        if (personal.centeredClock) centerClock.setVisibility(valid ? View.VISIBLE : View.INVISIBLE);
         handler.removeCallbacks(clockCheck);
         if (valid) {
             updateGreeting();
@@ -1924,12 +2142,743 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (!festiveGreeting.isEmpty()) {
             greeting.setText(festiveGreeting);
             greeting.setTextColor(liftTowardsWhite(festival.accentColor(), 0.25f));
+        } else if (!styleGreeting.isEmpty()) {
+            greeting.setText(styleGreeting);
+            greeting.setTextColor(greetingColor);
         } else {
             greeting.setText(greetingName.isEmpty() ? getString(res)
                     : getString(R.string.greeting_with_name, getString(res), greetingName));
             greeting.setTextColor(greetingColor);
         }
+        if (centerGreeting != null && !TextUtils.equals(centerGreeting.getText(), greeting.getText())) {
+            centerGreeting.setText(greeting.getText());
+        }
         if (shamsi) shamsiDate.setText(Shamsi.today());
+    }
+
+    // ---- weather pill and style rules (config.json, see Personal) ------------------------------------
+
+    /** The category of the last weather reading for style rules, or null without one. */
+    private String weatherCondition() {
+        Weather.Reading reading = weather != null ? weather.last() : null;
+        return reading != null ? reading.condition() : null;
+    }
+
+    private void showWeather(Weather.Reading reading) {
+        // Before the first reading for this place: the place alone, so the pill does not pop in later.
+        if (reading == null) {
+            weatherPill.setText(personal.weatherPlace.isEmpty() ? "…" : personal.weatherPlace);
+            return;
+        }
+        // Two lines, the second smaller and dimmer: reading over "ST 17° · Palermo".
+        String first = reading.chipFirstLine(), second = reading.chipSecondLine(personal.weatherPlace);
+        SpannableString text = new SpannableString(first + "\n" + second);
+        text.setSpan(new RelativeSizeSpan(0.78f), first.length() + 1, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        text.setSpan(new ForegroundColorSpan(0xB3FFFFFF), first.length() + 1, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        if (!TextUtils.equals(weatherPill.getText().toString(), text.toString())) weatherPill.setText(text);
+    }
+
+    /** Puts the wallpaper and greeting of the style rule that applies now; checked once a minute and per reading. */
+    private void applyStyle() {
+        if (personal.styles.isEmpty()) return;
+        LocalDateTime now = LocalDateTime.now();
+        String condition = weatherCondition();
+        wallpaperPlayer.pin(StyleRule.wallpaper(personal.styles, now, condition));
+        String text = StyleRule.greeting(personal.styles, now, condition);
+        if (!text.equals(styleGreeting)) {
+            styleGreeting = text;
+            updateGreeting();
+        }
+    }
+
+    // ---- side menu, rest and the Appearance panel (menu_style "side", rest_seconds) ------------------
+
+    /**
+     * The top bar's buttons as a column at the right, above the dock, as in the reference video: Inputs, Wi-Fi,
+     * Appearance and Settings, with their names. Hidden until one of them has focus (Up from the right half of the
+     * dock). Settings opens the quick settings panel first; the TV's own Settings are one row away there.
+     */
+    private void setUpSideMenu(TextView btnSettings, View btnAppearance) {
+        LinearLayout bar = findViewById(R.id.topButtons);
+        ((ViewGroup) bar.getParent()).removeView(bar);
+        bar.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.CENTER_VERTICAL);
+        lp.setMarginEnd((int) (48 * density));
+        lp.topMargin = (int) (10 * density);
+        // Under the glass highlight, over everything else.
+        root.addView(bar, root.indexOfChild(glass), lp);
+        // One way into every setting: the panel holds the look and the TV's own screens (Wi-Fi among them), so
+        // the Wi-Fi and Settings pills step aside for a single "Ajustes" one. Inputs stays when there are any.
+        btnAppearance.setVisibility(View.VISIBLE);
+        ((TextView) btnAppearance).setText("Ajustes");
+        ((TextView) btnAppearance).setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_settings, 0, 0, 0);
+        btnWifi.setVisibility(View.GONE);
+        btnSettings.setVisibility(View.GONE);
+        int width = (int) (190 * density);
+        btnWifi.setMaxWidth(width);
+        View.OnKeyListener keys = this::onSideMenuKey;
+        for (int i = 0; i < bar.getChildCount(); i++) {
+            View pill = bar.getChildAt(i);
+            LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) pill.getLayoutParams();
+            p.width = width;
+            p.setMarginStart(0);
+            p.topMargin = i == 0 ? 0 : (int) (9 * density);
+            pill.setLayoutParams(p);
+            if (pill instanceof TextView) ((TextView) pill).setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+            pill.setOnKeyListener(keys);
+        }
+        btnSettings.setOnClickListener(v -> open(new Intent(this, QuickSettingsActivity.class)));
+        sideMenu = bar;
+        bar.setAlpha(0f);
+        bar.setTranslationX(28 * density);
+    }
+
+    private List<View> sidePills() {
+        List<View> pills = new ArrayList<>();
+        if (sideMenu == null) return pills;
+        for (int i = 0; i < sideMenu.getChildCount(); i++) {
+            View pill = sideMenu.getChildAt(i);
+            if (pill.getVisibility() == View.VISIBLE) pills.add(pill);
+        }
+        return pills;
+    }
+
+    private boolean onSideMenuKey(View v, int keyCode, KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+        List<View> pills = sidePills();
+        int i = pills.indexOf(v);
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_UP: {
+                View np = findViewById(R.id.nowPlaying);
+                if (i > 0) pills.get(i - 1).requestFocus();
+                else if (np.getVisibility() == View.VISIBLE) np.requestFocus();
+                return true;
+            }
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (i >= 0 && i < pills.size() - 1) pills.get(i + 1).requestFocus();
+                else focusTile(lastFocused % COLUMNS);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+                if (btnFootball.getVisibility() == View.VISIBLE) btnFootball.requestFocus();
+                return true;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** Up from the dock: the football chip from its left half (when there is one), the menu's last pill otherwise. */
+    private void upFromDock(int position) {
+        List<View> pills = sidePills();
+        boolean left = position < (COLUMNS + 1) / 2;
+        if ((left || pills.isEmpty()) && btnFootball.getVisibility() == View.VISIBLE) btnFootball.requestFocus();
+        else if (!pills.isEmpty()) pills.get(pills.size() - 1).requestFocus();
+    }
+
+    private void showSideMenu(boolean show) {
+        if (show == sideMenuShown) return;
+        sideMenuShown = show;
+        sideMenu.animate().cancel();
+        sideMenu.animate().alpha(show ? 1f : 0f).translationX(show ? 0f : 28 * density)
+                .setDuration(show ? 220 : 160).start();
+    }
+
+    private void openAppearance() {
+        if (appearancePanel == null) {
+            appearancePanel = new AppearancePanel(this, root, personal, greetingName, adapter.dockApps(),
+                    new AppearancePanel.Host() {
+                        @Override
+                        public void onAppearanceClosed(boolean changed) {
+                            // Rebuild once the panel has faded, so the new choices (dock, wallpaper…) all apply.
+                            if (changed) handler.postDelayed(MainActivity.this::recreate, 200);
+                            else findViewById(R.id.btnAppearance).requestFocus();
+                        }
+
+                        @Override
+                        public void onEditDock() {
+                            handler.post(() -> {
+                                if (!isDestroyed()) startDockEdit();
+                            });
+                        }
+
+                        @Override
+                        public void onOpen(Intent intent) {
+                            open(intent);
+                        }
+
+                        @Override
+                        public String networkName() {
+                            CharSequence name = btnWifi.getText();
+                            if (TextUtils.isEmpty(name)) name = btnWifi.getContentDescription();
+                            return name == null ? "" : name.toString();
+                        }
+                    });
+        }
+        appearancePanel.open();
+    }
+
+    private final Runnable restNow = this::rest;
+
+    private void scheduleRest() {
+        root.removeCallbacks(restNow);
+        if (look != null && look.restSeconds > 0 && !resting) root.postDelayed(restNow, look.restSeconds * 1000L);
+    }
+
+    /**
+     * The locked screen, after rest_seconds without a key or on Back: the dock, its name and glow, the menu and the
+     * football chip fade away and the wallpaper sharpens; the clock, the weather, Now playing and today's matches
+     * (a strip along the bottom, where the dock was) stay. Never while a popup, the panel or a mode is open.
+     */
+    /** Motion curves: things arriving decelerate long and soft, things leaving accelerate away briefly. */
+    private static final PathInterpolator ENTER = new PathInterpolator(0.2f, 0f, 0f, 1f);
+    private static final PathInterpolator EXIT = new PathInterpolator(0.3f, 0f, 0.8f, 0.15f);
+    /** Grid scrolls: an eased glide rather than RecyclerView's quick default. */
+    private static final PathInterpolator GLIDE = new PathInterpolator(0.25f, 0.1f, 0.1f, 1f);
+
+    private void rest() {
+        if (resting || reordering || pickSlot != PICK_NONE || openPopup != null || !started
+                || (appearancePanel != null && appearancePanel.isOpen())) return;
+        resting = true;
+        // The dock sinks away while its name and glow fade; the matches then rise into its place.
+        grid.animate().cancel();
+        grid.animate().alpha(0f).translationY(48 * density).setDuration(380).setInterpolator(EXIT).start();
+        // The name sits where showHero put it (its translationY is its place above the dock): move relative to that.
+        hero.animate().cancel();
+        heroRestY = hero.getTranslationY();
+        hero.animate().alpha(0f).translationY(heroRestY + 16 * density).setDuration(260).setInterpolator(EXIT).start();
+        for (View v : new View[]{glass, ambient, sideMenu, btnFootball}) {
+            if (v != null) v.animate().alpha(0f).setDuration(260).start();
+        }
+        setTopShown(true);
+        fillLockMatches();
+        wallpaperPlayer.setBlurred(false);
+    }
+
+    private void wake() {
+        if (!resting) return;
+        resting = false;
+        // The matches drop away first, then the dock rises tile by tile into its place, then its name and glow.
+        lockMatches.animate().cancel();
+        lockMatches.animate().alpha(0f).translationY(24 * density).setStartDelay(0).setDuration(220)
+                .setInterpolator(EXIT).withEndAction(() -> {
+                    if (!resting) lockMatches.setVisibility(View.GONE);
+                }).start();
+        // Delays go through the handler, not setStartDelay: a ViewPropertyAnimator keeps its delay for every later
+        // animation of that view, and the focus code animates the dock, its name and the glass all the time.
+        grid.animate().cancel();
+        grid.setTranslationY(48 * density);
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View tile = grid.getChildAt(i);
+            int position = grid.getChildAdapterPosition(tile);
+            if (position < 0 || position >= COLUMNS) continue;
+            tile.setTranslationY(22 * density);
+            handler.postDelayed(() -> {
+                if (!resting) tile.animate().translationY(0f).setDuration(480).setInterpolator(ENTER).start();
+            }, 90 + position * 35L);
+        }
+        later(90, () -> grid.animate().alpha(1f).translationY(0f).setDuration(520).setInterpolator(ENTER).start());
+        later(120, () -> btnFootball.animate().alpha(1f).setDuration(360).setInterpolator(ENTER).start());
+        if (heroShown) {
+            hero.animate().cancel();
+            float place = Float.isNaN(heroRestY) ? hero.getTranslationY() : heroRestY;
+            hero.setTranslationY(place + 16 * density);
+            later(200, () -> hero.animate().alpha(1f).translationY(place).setDuration(420).setInterpolator(ENTER).start());
+            if (ambientGlow) later(260, () -> ambient.animate().alpha(1f).setDuration(600).start());
+        }
+        if (glassShown) later(420, () -> glass.animate().alpha(1f).setDuration(240).start());
+        // Locked with focus in the menu: it stays focused, so bring it back with the rest.
+        if (sideMenu != null && sideMenuShown) later(120, () -> sideMenu.animate().alpha(1f).setDuration(300).start());
+        wallpaperPlayer.setBlurred(true);
+        scheduleRest();
+    }
+
+    /** Runs a step of the wake animation after {@code ms}, unless Home locked again meanwhile. */
+    private void later(long ms, Runnable step) {
+        handler.postDelayed(() -> {
+            if (!resting) step.run();
+        }, ms);
+    }
+
+    /** Up to four of today's matches along the bottom of the locked screen: live first, then the next ones. */
+    private void fillLockMatches() {
+        boolean wasShown = lockMatches.getVisibility() == View.VISIBLE;
+        lockMatches.removeAllViews();
+        List<Football.Match> all = football != null ? football.matches() : Collections.emptyList();
+        List<Football.Match> shown = new ArrayList<>();
+        for (Football.Match m : all) if (!m.finished() && shown.size() < 4) shown.add(m);
+        for (Football.Match m : all) if (m.finished() && shown.size() < 4 && shown.size() < 2) shown.add(m);
+        if (shown.isEmpty() || !resting) {
+            lockMatches.setVisibility(View.GONE);
+            return;
+        }
+        if (crests == null) crests = new Crests(this);
+        for (Football.Match m : shown) {
+            View card = getLayoutInflater().inflate(R.layout.item_lock_match, lockMatches, false);
+            card.findViewById(R.id.lmAccent).getBackground().mutate().setTint(m.league.color);
+            TextView league = card.findViewById(R.id.lmLeague);
+            league.setText(m.favorite ? "★ " + m.league.name : m.league.name);
+            league.setTextColor(m.league.color);
+            TextView status = card.findViewById(R.id.lmStatus);
+            status.setText(m.status());
+            if (m.live()) status.setTextColor(0xFFFF6961);
+            ((TextView) card.findViewById(R.id.lmHome)).setText(m.home);
+            ((TextView) card.findViewById(R.id.lmAway)).setText(m.away);
+            ((TextView) card.findViewById(R.id.lmHomeScore)).setText(m.upcoming() ? "" : m.homeScore);
+            ((TextView) card.findViewById(R.id.lmAwayScore)).setText(m.upcoming() ? "" : m.awayScore);
+            crests.load(m.homeLogo, card.findViewById(R.id.lmHomeCrest));
+            crests.load(m.awayLogo, card.findViewById(R.id.lmAwayCrest));
+            if (m.finished()) card.setAlpha(0.7f);
+            lockMatches.addView(card);
+        }
+        lockMatches.setVisibility(View.VISIBLE);
+        if (wasShown) return;   // a score update while locked: no entrance again
+        lockMatches.setAlpha(0f);
+        lockMatches.setTranslationY(16 * density);
+        lockMatches.animate().alpha(1f).translationY(0f).setStartDelay(250).setDuration(450).start();
+    }
+
+    /**
+     * The clock, the chips and Now playing step back while focus is in the rows under the dock, which scroll up
+     * into their place; they come back with focus on the dock.
+     */
+    private void setTopShown(boolean shown) {
+        if (shown == topShown) return;
+        topShown = shown;
+        // They lift and fade as the rows glide up into their place, and settle back down when the dock returns.
+        for (View v : new View[]{centerClock, clockBlock, findViewById(R.id.nowPlaying)}) {
+            v.animate().cancel();
+            // Only this method animates these with a delay, and it always sets one, so it never leaks elsewhere.
+            v.animate().alpha(shown ? 1f : 0f).translationY(shown ? 0f : -24 * density)
+                    .setStartDelay(shown ? 120 : 0).setDuration(shown ? 460 : 300)
+                    .setInterpolator(shown ? ENTER : EXIT).start();
+        }
+    }
+
+    // ---- easter egg -----------------------------------------------------------------------------------
+
+    /** Left five times within six seconds on the first dock tile, where Left does nothing else. */
+    private void countEggPress() {
+        long now = SystemClock.uptimeMillis();
+        if (now - eggStart > 6000) {
+            eggStart = now;
+            eggPresses = 0;
+        }
+        if (++eggPresses < 5) return;
+        eggPresses = 0;
+        DogEgg.play(root, dogLine());
+    }
+
+    /** What the dog says: something about today when there is something to say, a plain bark otherwise. */
+    private String dogLine() {
+        List<String> lines = new ArrayList<>();
+        // The favourite team's match today (futbol.equipo), under the team's own name.
+        Football.Match team = football != null ? football.favorite() : null;
+        if (team != null) {
+            String name = personal.footballTeam;
+            lines.add(team.live() ? "¡Guau! " + team.home + " " + team.homeScore + "–" + team.awayScore + " " + team.away
+                    + ", ¡no te lo pierdas! ⚽"
+                    : team.upcoming() ? "¡Guau! Hoy juega " + team.home + " vs " + team.away + " a las " + team.status() + " ⚽"
+                    : "¡Guau! Ya jugó " + name + ": " + team.home + " " + team.homeScore + "–" + team.awayScore + " " + team.away);
+        }
+        String condition = weatherCondition();
+        if ("lluvia".equals(condition) || "tormenta".equals(condition)) lines.add("Afuera llueve… mejor quedarse a ver algo 🌧️");
+        if ("despejado".equals(condition)) lines.add("¡Qué lindo día! ¿Salimos a pasear? 🐾");
+        lines.add("¡Guau! ¿Me das un premio? 🦴");
+        lines.add("¿Otro capítulo más? Yo me quedo acá con vos 🐾");
+        lines.add("¡Guau guau! Te estaba esperando");
+        return lines.get(new java.util.Random().nextInt(lines.size()));
+    }
+
+    // ---- the player panel (OK on Now playing) --------------------------------------------------------
+
+    private PopupWindow playerPopup;
+    private View playerPanel;
+    /** Where the position bar points while Left/Right move it, before OK jumps there; -1 follows the track. */
+    private long seekPreview = -1;
+    private final Runnable playerTick = new Runnable() {
+        @Override
+        public void run() {
+            if (playerPopup == null) return;
+            fillPlayer();
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    private void showPlayer() {
+        if (nowPlaying == null || !nowPlaying.active()) return;
+        View card = findViewById(R.id.nowPlaying);
+        View panel = getLayoutInflater().inflate(R.layout.popup_player, root, false);
+        PopupWindow popup = glassPopup(panel, (int) (380 * density));
+        popup.setOnDismissListener(() -> {
+            if (openPopup == popup) openPopup = null;
+            playerPopup = null;
+            playerPanel = null;
+            handler.removeCallbacks(playerTick);
+        });
+        playerPopup = popup;
+        playerPanel = panel;
+        seekPreview = -1;
+        ((ImageView) panel.findViewById(R.id.plArt)).setClipToOutline(true);
+        panel.findViewById(R.id.plPrev).setOnClickListener(v -> nowPlaying.previous());
+        panel.findViewById(R.id.plPlay).setOnClickListener(v -> nowPlaying.toggle());
+        panel.findViewById(R.id.plNext).setOnClickListener(v -> nowPlaying.next());
+        panel.findViewById(R.id.plVideo).setOnClickListener(v -> {
+            popup.dismiss();
+            openVideoclip();
+        });
+        View seek = panel.findViewById(R.id.plSeek);
+        View hint = panel.findViewById(R.id.plSeekHint);
+        seek.setOnFocusChangeListener((v, focused) -> {
+            seekPreview = -1;
+            hint.setVisibility(focused ? View.VISIBLE : View.INVISIBLE);
+            fillPlayer();
+        });
+        seek.setOnKeyListener((v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            long duration = nowPlaying.duration();
+            if ((keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) && duration > 0) {
+                long from = seekPreview >= 0 ? seekPreview : nowPlaying.position();
+                long step = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ? 10_000 : -10_000;
+                seekPreview = Math.max(0, Math.min(duration, from + step));
+                fillPlayer();
+                return true;
+            }
+            if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) && seekPreview >= 0) {
+                nowPlaying.seekTo(seekPreview);
+                seekPreview = -1;
+                fillPlayer();
+                return true;
+            }
+            return false;
+        });
+        fillPlayer();
+        dropIn(popup, panel, card, Gravity.END);
+        panel.findViewById(R.id.plPlay).requestFocus();
+        handler.postDelayed(playerTick, 1000);
+    }
+
+    private void fillPlayer() {
+        View p = playerPanel;
+        if (p == null || nowPlaying == null) return;
+        ((TextView) p.findViewById(R.id.plTitle)).setText(nowPlaying.title());
+        ((TextView) p.findViewById(R.id.plArtist)).setText(nowPlaying.artist());
+        ((ImageView) p.findViewById(R.id.plArt)).setImageBitmap(nowPlaying.art());
+        ((EqualizerView) p.findViewById(R.id.plEqualizer)).setPlaying(nowPlaying.playing());
+        ((TextView) p.findViewById(R.id.plPlay)).setText(nowPlaying.playing() ? "❚❚" : "▶");
+        long duration = nowPlaying.duration();
+        long at = seekPreview >= 0 ? seekPreview : nowPlaying.position();
+        ProgressBar bar = p.findViewById(R.id.plBar);
+        bar.setProgress(duration > 0 ? (int) Math.min(1000, at * 1000 / duration) : 0);
+        TextView now = p.findViewById(R.id.plNow);
+        now.setText(clock(at));
+        now.setTextColor(seekPreview >= 0 ? 0xFF4ADE80 : 0xD9FFFFFF);   // green while choosing a moment
+        ((TextView) p.findViewById(R.id.plTotal)).setText(duration > 0 ? clock(duration) : "");
+    }
+
+    private static String clock(long ms) {
+        long s = ms / 1000;
+        return s >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+                : String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60);
+    }
+
+    /** The song's video: a YouTube search for artist and title (YouTube asks for the account first, then searches). */
+    private void openVideoclip() {
+        String query = (nowPlaying.artist() + " " + nowPlaying.title()).trim();
+        Uri search = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query));
+        Intent intent = new Intent(Intent.ACTION_VIEW, search).setPackage("com.google.android.youtube.tv");
+        if (intent.resolveActivity(getPackageManager()) == null) intent.setPackage(null);
+        open(intent);
+    }
+
+    // ---- choosing the dock's apps (dock_plus) --------------------------------------------------------
+
+    private static final int PICK_NONE = -1, PICK_ADD = -2;
+    /** The dock slot being changed, PICK_ADD for the "+" tile, PICK_NONE when not choosing. */
+    private int pickSlot = PICK_NONE;
+    private TextView pickHint;
+
+    @Override
+    public void onAddToDock() {
+        if (adapter.dockApps() >= COLUMNS) {
+            Toast.makeText(this, "La barra ya está llena: cambiá o quitá una app", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startPick(PICK_ADD, "Elegí la app para agregar a la barra");
+    }
+
+    /** OK held on a dock app: a small menu over it. */
+    @Override
+    public boolean onDockTileMenu(int position, String pkg, View card) {
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = glassPopup(panel, (int) (210 * density));
+        String label = adapter.labelAt(position);
+        addInputRow(rows, popup, R.drawable.ic_swap_vert, "Cambiar app", -1,
+                () -> startPick(position, "Elegí la app que va en lugar de " + label));
+        addInputRow(rows, popup, R.drawable.ic_apps, "Quitar de la barra", -1, () -> {
+            List<String> dock = currentDock();
+            dock.remove(pkg);
+            saveDock(dock);
+        });
+        addInputRow(rows, popup, R.drawable.ic_home_settings, "Mover", -1, this::toggleReorder);
+        addInputRow(rows, popup, R.drawable.ic_settings, "Info de la app", -1, () -> open(
+                new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg))));
+        // The dock sits at the foot of the screen: the menu opens upwards from the tile, rising into place.
+        panel.measure(View.MeasureSpec.makeMeasureSpec((int) (210 * density), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.UNSPECIFIED);
+        int[] at = new int[2];
+        card.getLocationInWindow(at);
+        int y = Math.max((int) (16 * density), at[1] - panel.getMeasuredHeight() - (int) (12 * density));
+        panel.setAlpha(0f);
+        panel.setTranslationY(10 * density);
+        popup.showAtLocation(root, Gravity.TOP | Gravity.START, at[0], y);
+        panel.animate().alpha(1f).translationY(0f).setDuration(200).start();
+        rows.getChildAt(0).requestFocus();
+        return true;
+    }
+
+    /** The rows under the dock become the choice: focus goes down into them, OK picks, Back cancels. */
+    private void startPick(int slot, String hint) {
+        if (adapter.appCount() <= COLUMNS) {
+            Toast.makeText(this, "No hay más apps para elegir", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        pickSlot = slot;
+        if (pickHint == null) {
+            pickHint = new TextView(new android.view.ContextThemeWrapper(this, R.style.TopButtonBase));
+            pickHint.setBackgroundResource(R.drawable.pill_bg);
+            pickHint.setTextColor(0xFFFFFFFF);
+            pickHint.setFocusable(false);
+            pickHint.setPadding((int) (20 * density), 0, (int) (20 * density), 0);
+            pickHint.setGravity(Gravity.CENTER);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    (int) (42 * density), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            lp.topMargin = (int) (24 * density);
+            root.addView(pickHint, lp);
+        }
+        pickHint.setText(hint + "   ·   OK elegir   ·   Atrás cancelar");
+        pickHint.setVisibility(View.VISIBLE);
+        focusTile(COLUMNS);
+    }
+
+    private void endPick() {
+        pickSlot = PICK_NONE;
+        if (pickHint != null) pickHint.setVisibility(View.GONE);
+    }
+
+    /** OK on a tile under the dock while choosing: it goes into the slot (or after the others for "+"). */
+    private void pick(int position) {
+        String pkg = adapter.pkgAt(position);
+        int slot = pickSlot;
+        endPick();
+        if (pkg == null) return;
+        List<String> dock = currentDock();
+        dock.remove(pkg);
+        if (slot == PICK_ADD || slot >= dock.size()) dock.add(pkg);
+        else dock.set(slot, pkg);
+        saveDock(dock);
+    }
+
+    private List<String> currentDock() {
+        List<String> dock = new ArrayList<>();
+        for (int i = 0; i < adapter.dockApps(); i++) {
+            String p = adapter.pkgAt(i);
+            if (p != null) dock.add(p);
+        }
+        return dock;
+    }
+
+    /** Saved with the other on-TV choices (a theme push resets it), then Home rebuilds around the new dock. */
+    private void saveDock(List<String> dock) {
+        Appearance.prefs(this).edit().putString(Appearance.DOCK_APPS, TextUtils.join(",", dock)).apply();
+        // The saved tile order would otherwise keep the old dock in place.
+        File order = Order.file(this);
+        if (order.isFile() && !order.delete()) Log.w("TvHome", "Could not reset the tile order");
+        recreate();
+    }
+
+    // ---- football pill and match list (config.json futbol, see Football) ----------------------------
+
+    /** The favourite's match if it plays today, else how many are live or on today; hidden on a day without any. */
+    private void showFootball() {
+        List<Football.Match> matches = football.matches();
+        Football.Match favorite = football.favorite();
+        int live = football.liveCount();
+        String text;
+        if (favorite != null) text = "⚽  " + favorite.teams() + "  ·  " + favorite.status();
+        else if (live > 0) text = "⚽  " + live + (live == 1 ? " partido en vivo" : " partidos en vivo");
+        else if (!matches.isEmpty()) text = "⚽  " + matches.size() + (matches.size() == 1 ? " partido hoy" : " partidos hoy");
+        else text = null;
+        if (text == null) {
+            if (btnFootball.hasFocus()) focusTile(lastFocused % COLUMNS);
+            btnFootball.setVisibility(View.INVISIBLE);
+            return;
+        }
+        if (!TextUtils.equals(btnFootball.getText(), text)) btnFootball.setText(text);
+        btnFootball.setVisibility(View.VISIBLE);
+        if (resting) fillLockMatches();
+    }
+
+    /** Today's matches under the pill; OK on one opens the app its league is shown on. */
+    private void showMatches() {
+        football.update(true);
+        List<Football.Match> matches = football.matches();
+        if (matches.isEmpty()) {
+            Toast.makeText(this, "No hay partidos hoy", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        View panel = getLayoutInflater().inflate(R.layout.popup_matches, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        int width = (int) (560 * density);
+        PopupWindow popup = glassPopup(panel, width);
+        if (crests == null) crests = new Crests(this);
+        // The list comes sorted live, then upcoming, then finished (the favourite first in each): a title per group.
+        String section = null;
+        for (Football.Match match : matches) {
+            String group = match.live() ? "En vivo" : match.upcoming() ? "Próximos" : "Terminados";
+            if (!group.equals(section)) {
+                section = group;
+                TextView header = (TextView) getLayoutInflater().inflate(R.layout.item_match_header, rows, false);
+                header.setText(group);
+                if (match.live()) header.setTextColor(0xFFFF6961);
+                rows.addView(header);
+            }
+            addMatchRow(rows, popup, match);
+        }
+        // A long day scrolls inside the panel instead of running off the screen.
+        panel.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.UNSPECIFIED);
+        int max = (int) (root.getHeight() * 0.66f);
+        if (panel.getMeasuredHeight() > max) popup.setHeight(max);
+        dropIn(popup, panel, btnFootball, Gravity.START);
+        for (int i = 0; i < rows.getChildCount(); i++) {
+            if (rows.getChildAt(i).isFocusable()) {
+                rows.getChildAt(i).requestFocus();
+                break;
+            }
+        }
+    }
+
+    private void addMatchRow(LinearLayout rows, PopupWindow popup, Football.Match match) {
+        View row = getLayoutInflater().inflate(R.layout.item_match, rows, false);
+        int accent = match.league.color;
+        row.findViewById(R.id.accent).getBackground().mutate().setTint(accent);
+        // The competition in its colour; the glass focus keeps it readable as it is.
+        TextView league = row.findViewById(R.id.league);
+        league.setText(match.favorite ? "★  " + match.league.name : match.league.name);
+        league.setTextColor(accent);
+        ((TextView) row.findViewById(R.id.home)).setText(match.home);
+        ((TextView) row.findViewById(R.id.away)).setText(match.away);
+        ((TextView) row.findViewById(R.id.score)).setText(match.upcoming() ? "vs" : match.homeScore + " – " + match.awayScore);
+        crests.load(match.homeLogo, row.findViewById(R.id.homeCrest));
+        crests.load(match.awayLogo, row.findViewById(R.id.awayCrest));
+        TextView status = row.findViewById(R.id.status);
+        status.setText(match.status());
+        if (match.live()) {
+            View dot = row.findViewById(R.id.dot);
+            dot.setVisibility(View.VISIBLE);
+            dot.getBackground().mutate().setTint(0xFFFF453A);
+            status.setTextColor(0xFFFF6961);
+        }
+        String homeGoals = match.scorers(true), awayGoals = match.scorers(false);
+        if (!homeGoals.isEmpty() || !awayGoals.isEmpty()) {
+            row.findViewById(R.id.goals).setVisibility(View.VISIBLE);
+            ((TextView) row.findViewById(R.id.homeGoals)).setText(homeGoals.isEmpty() ? "" : "⚽ " + homeGoals);
+            ((TextView) row.findViewById(R.id.awayGoals)).setText(awayGoals.isEmpty() ? "" : awayGoals + " ⚽");
+        }
+        // Where to watch it: each app's icon, then the channel and the apps' names.
+        LinearLayout icons = row.findViewById(R.id.channelIcons);
+        StringBuilder apps = new StringBuilder();
+        for (Football.Option option : match.league.options) {
+            Drawable icon = appIcon(option.app);
+            if (icon != null) {
+                ImageView view = new ImageView(this);
+                view.setImageDrawable(icon);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (16 * density), (int) (16 * density));
+                lp.setMarginEnd((int) (4 * density));
+                icons.addView(view, lp);
+            }
+            String label = appLabel(option.app);
+            if (!label.isEmpty()) apps.append(apps.length() == 0 ? "" : " o ").append(label);
+        }
+        String channel = match.league.channel;
+        String where = channel.isEmpty() ? apps.toString() : apps.length() == 0 ? channel : channel + "  ·  " + apps;
+        ((TextView) row.findViewById(R.id.channel)).setText(where.isEmpty() ? "Canal sin configurar" : where);
+        // Finished matches step back; they come forward again while focused.
+        if (match.finished()) {
+            row.setAlpha(0.62f);
+            row.setOnFocusChangeListener((v, focused) -> v.setAlpha(focused ? 1f : 0.62f));
+        }
+        row.setOnClickListener(v -> {
+            popup.dismiss();
+            List<Football.Option> options = match.league.options;
+            if (options.size() > 1) chooseApp(match, btnFootball);
+            else if (options.size() == 1) watch(match, options.get(0));
+            else Toast.makeText(this, "Configurá en qué app ver " + match.league.name, Toast.LENGTH_SHORT).show();
+        });
+        rows.addView(row);
+    }
+
+    /** "¿Dónde lo ves?": one row per app the competition is on. */
+    private void chooseApp(Football.Match match, View anchor) {
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = glassPopup(panel, (int) (260 * density));
+        for (Football.Option option : match.league.options) {
+            String label = appLabel(option.app);
+            if (label.isEmpty()) continue;
+            addInputRow(rows, popup, R.drawable.ic_livetv, "Ver en " + label, -1, () -> watch(match, option));
+            ImageView icon = rows.getChildAt(rows.getChildCount() - 1).findViewById(R.id.icon);
+            Drawable appIcon = appIcon(option.app);
+            if (appIcon != null) {
+                icon.setImageTintList(null);   // the app's own colours, not the menu's white
+                icon.setImageDrawable(appIcon);
+            }
+        }
+        if (rows.getChildCount() == 0) return;
+        dropIn(popup, panel, anchor, Gravity.START);
+        rows.getChildAt(0).requestFocus();
+    }
+
+    /**
+     * Opens the app, through its deep link when the theme gives one (Flow's live TV) and the app takes it, and lets
+     * AssistService do the rest there: Flow's channel, Disney+'s profile and match.
+     */
+    private void watch(Football.Match match, Football.Option option) {
+        PackageManager pm = getPackageManager();
+        Intent intent = null;
+        if (!option.link.isEmpty()) {
+            intent = new Intent(Intent.ACTION_VIEW, Uri.parse(option.link)).setPackage(option.app);
+            if (intent.resolveActivity(pm) == null) intent = null;
+        }
+        if (intent == null) intent = pm.getLeanbackLaunchIntentForPackage(option.app);
+        if (intent == null) intent = pm.getLaunchIntentForPackage(option.app);
+        if (intent == null) {
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String profile = personal.footballProfile.isEmpty() ? greetingName : personal.footballProfile;
+        AssistService.begin(option.app, profile, match);
+        open(intent);
+    }
+
+    private Drawable appIcon(String pkg) {
+        try {
+            return getPackageManager().getApplicationIcon(pkg);
+        } catch (PackageManager.NameNotFoundException e) {
+            return null;
+        }
+    }
+
+    private String appLabel(String pkg) {
+        if (pkg.isEmpty()) return "";
+        try {
+            PackageManager pm = getPackageManager();
+            return pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
+        } catch (PackageManager.NameNotFoundException e) {
+            return "";
+        }
     }
 
     // ---- race-weekend panel (a theme's race_calendar) -----------------------------------------------
@@ -2407,6 +3356,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         popup.setElevation(0f);
         popup.setOnDismissListener(() -> {
             if (openPopup == popup) openPopup = null;
+        });
+        // A popup is a window of its own: its moves never reach Home's focus listener, so tick from here.
+        panel.getViewTreeObserver().addOnGlobalFocusChangeListener((from, to) -> {
+            if (sounds != null && from != null && to != null) sounds.tick();
         });
         openPopup = popup;
         return popup;

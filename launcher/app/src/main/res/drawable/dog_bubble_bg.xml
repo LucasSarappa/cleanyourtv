@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The dog's speech bubble: white and soft, like a comic balloon. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#F5FFFFFF" />
+    <corners android:radius="18dp" />
+</shape>

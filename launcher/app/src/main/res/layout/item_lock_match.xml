@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A match on the locked screen: competition and status, then each team with its crest and goals. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="196dp"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="6dp"
+    android:layout_marginEnd="6dp"
+    android:orientation="horizontal"
+    android:background="@drawable/lock_card_bg"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp"
+    android:paddingEnd="12dp">
+
+    <View
+        android:id="@+id/lmAccent"
+        android:layout_width="3dp"
+        android:layout_height="match_parent"
+        android:layout_marginStart="9dp"
+        android:layout_marginEnd="10dp"
+        android:background="@drawable/match_accent" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/lmLeague"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textSize="9sp"
+                android:fontFamily="@font/outfit_medium"
+                android:letterSpacing="0.14"
+                android:textAllCaps="true" />
+
+            <TextView
+                android:id="@+id/lmStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:textColor="#B3FFFFFF"
+                android:textSize="10sp"
+                android:fontFamily="@font/outfit_medium" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/lmHomeCrest"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:contentDescription="@null" />
+
+            <TextView
+                android:id="@+id/lmHome"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="7dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#F2FFFFFF"
+                android:textSize="13sp"
+                android:fontFamily="@font/outfit_medium" />
+
+            <TextView
+                android:id="@+id/lmHomeScore"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:fontFamily="@font/outfit_medium" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/lmAwayCrest"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:contentDescription="@null" />
+
+            <TextView
+                android:id="@+id/lmAway"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="7dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#F2FFFFFF"
+                android:textSize="13sp"
+                android:fontFamily="@font/outfit_medium" />
+
+            <TextView
+                android:id="@+id/lmAwayScore"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:fontFamily="@font/outfit_medium" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

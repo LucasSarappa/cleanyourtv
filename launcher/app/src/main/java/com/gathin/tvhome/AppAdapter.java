@@ -57,6 +57,14 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         void onLibraryRequested();
         void onLibraryFocused();
         void onLibraryUp();
+
+        /** OK on the "+" tile in the first free dock slot (config.json dock_plus). */
+        default void onAddToDock() { }
+
+        /** OK held on a dock app (dock_plus): change it, take it out, move it or see its info. */
+        default boolean onDockTileMenu(int position, String pkg, View card) {
+            return false;
+        }
     }
 
     static final class Entry {
@@ -199,6 +207,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     /** Tile names and bundled banners that replace the app's own (config.xml, app_labels and app_banners). */
     private final Map<String, String> appLabels, appBanners;
     private final List<Entry> items = new ArrayList<>();
+    /** config.json dock_plus: a "+" tile in the first free dock slot, and OK held on a dock app opens its menu. */
+    private final boolean plusSlot;
 
     AppAdapter(Context ctx, TileListener listener, int dockSize, Config cfg) {
         this.ctx = ctx;
@@ -220,6 +230,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.launchActions = cfg.launchActions;
         this.appLabels = cfg.appLabels;
         this.appBanners = cfg.appBanners;
+        this.plusSlot = cfg.personal.dockPlus;
         // Tiles keep their identity across reload(), so a focused tile stays on its app instead of
         // its view being rebound to whatever app now sits in that slot.
         setHasStableIds(true);
@@ -395,6 +406,22 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         if (isLibraryAt(position)) return;
         Holder h = (Holder) holder;
         Entry e = items.get(position);
+        if (e.kind == Entry.EMPTY && isPlusAt(position)) {
+            // dock_plus: the first free slot is a "+" tile that adds an app to the dock.
+            h.card.setVisibility(View.VISIBLE);
+            h.card.setFocusable(true);
+            h.card.setBackground(h.cardBackground);
+            h.banner.setImageDrawable(null);
+            h.banner.setVisibility(View.GONE);
+            h.icon.setImageResource(R.drawable.ic_add);
+            h.icon.setVisibility(View.VISIBLE);
+            h.label.setText("Agregar");
+            h.label.setVisibility(View.VISIBLE);
+            h.name.setVisibility(View.INVISIBLE);
+            h.card.setOnClickListener(v -> listener.onAddToDock());
+            h.card.setOnLongClickListener(null);
+            return;
+        }
         if (e.kind == Entry.EMPTY) {
             // A free dock slot keeps its place in the row and the band, but shows nothing and takes no focus.
             h.card.setVisibility(View.INVISIBLE);
@@ -437,6 +464,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         }
         h.card.setOnClickListener(v -> launch(e));
         h.card.setOnLongClickListener(v -> {
+            int at = h.getBindingAdapterPosition();
+            if (plusSlot && dockRow && at >= 0 && at < dockSize && listener.onDockTileMenu(at, e.pkg, h.card)) return true;
             Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             try {
@@ -554,17 +583,36 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         return -1;
     }
 
-    /** Dock slots that hold an app: the whole dock unless some slots are empty. */
+    /** Dock slots that take focus: the whole dock unless some slots are empty; the "+" tile counts. */
     int dockFilled() {
+        return emptySlots > 0 ? docked + (plusSlot ? 1 : 0) : dockSize;
+    }
+
+    /** Dock slots that hold an app (the "+" tile is not one). */
+    int dockApps() {
         return emptySlots > 0 ? docked : dockSize;
     }
 
-    /** A position focus can land on: an empty dock slot gives the last dock app. */
+    /** A position focus can land on: an empty dock slot gives the "+" tile, or the last dock app without one. */
     int focusablePosition(int position) {
+        if (plusSlot && emptySlots > 0 && position >= docked && position < docked + emptySlots) return docked;
         return DockSlots.focusable(position, docked, emptySlots);
     }
 
+    /** The "+" tile: the first free dock slot when dock_plus is on. */
+    boolean isPlusAt(int position) {
+        return plusSlot && emptySlots > 0 && position == docked && dockRow && !reordering;
+    }
+
+    /** The package of the app at a position, or null for anything that is not an app. */
+    String pkgAt(int position) {
+        if (position < 0 || position >= items.size()) return null;
+        Entry e = items.get(position);
+        return e.kind == Entry.APP ? e.pkg : null;
+    }
+
     String labelAt(int position) {
+        if (isPlusAt(position)) return "Agregar app";
         return position >= 0 && position < items.size() ? items.get(position).label : "";
     }
 
